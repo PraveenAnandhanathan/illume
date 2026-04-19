@@ -146,7 +146,10 @@
 					(aliases[alias] || (aliases[alias] = [])).push(index);
 				});
 				var mapping = state.metadata.indices[index].mappings;
-				for (var type in mapping) {
+				// ES8 removed doc types: properties sits directly under mappings.
+				// Wrap it under a synthetic "_doc" type so the rest of the logic works unchanged.
+				var mappingToProcess = (mapping && mapping.properties) ? { "_doc": mapping } : mapping;
+				for (var type in mappingToProcess) {
 					indices[index].types.push(type);
 					if ( type in types) {
 						types[type].indices.push(index);
@@ -155,9 +158,9 @@
 							indices : [index], fields : {}
 						};
 					}
-					getFields(mapping[type].properties, type, index, [fields, types[type].fields, indices[index].fields]);
-					if ( typeof mapping[type]._parent !== "undefined") {
-						indices[index].parents[type] = mapping[type]._parent.type;
+					getFields(mappingToProcess[type].properties, type, index, [fields, types[type].fields, indices[index].fields]);
+					if ( typeof mappingToProcess[type]._parent !== "undefined") {
+						indices[index].parents[type] = mappingToProcess[type]._parent.type;
 					}
 				}
 			}

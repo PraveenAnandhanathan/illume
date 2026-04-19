@@ -30,7 +30,7 @@
 						}
 					}
 					return row;
-				})([ hit._type ], hit, {});
+				})([ hit._type || "_doc" ], hit, {});
 				row._source = hit;
 				return row;
 			}, this);

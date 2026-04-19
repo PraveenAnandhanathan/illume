@@ -51,7 +51,7 @@
 						}
 					}
 					return row;
-				})([ hit._index, hit._type ], hit._source, {});
+				})([ hit._index, hit._type || "_doc" ], hit._source, {});
 				metaColumns.forEach(function(n) { row[n] = hit[n]; });
 				row._source = hit;
 				if (typeof hit._parent!= "undefined") {
