@@ -595,7 +595,8 @@
 			data: function( DataSourceInterface )
 		 */
 		_getSummary: function(res) {
-			this.summary = i18n.text("TableResults.Summary", res._shards.successful, res._shards.total, (typeof res.hits.total === 'object') ? res.hits.total.value : res.hits.total, (res.took / 1000).toFixed(3));
+			var total = (typeof res.hits.total === 'object') ? res.hits.total.value : res.hits.total;
+			this.summary = i18n.text("TableResults.Summary", res._shards.successful.toLocaleString(), res._shards.total.toLocaleString(), total.toLocaleString(), (res.took / 1000).toFixed(3));
 		},
 		_getMeta: function(res) {
 			this.meta = { total: res.hits.total, shards: res._shards, tool: res.took };
@@ -2626,7 +2627,33 @@
 					}
 				});
 			}
+			this._updateVisibleFields();
 			this.requestUpdate(jEv);
+		},
+		_updateVisibleFields: function() {
+			var selectedIndices = this.query.indices;
+			if( selectedIndices.length === 0 ) {
+				// No index selected — show all fields
+				this.el.find(".uiQueryFilter-filters .uiSidebarSection").show();
+				return;
+			}
+			// Build set of field names present in ALL selected indices
+			var allowedFields = null;
+			selectedIndices.forEach(function(indexName) {
+				var indexMeta = this.metadata.indices[indexName];
+				if( !indexMeta ) { return; }
+				var indexFields = Object.keys(indexMeta.fields);
+				if( allowedFields === null ) {
+					allowedFields = indexFields;
+				} else {
+					allowedFields = allowedFields.filter(function(f) { return indexFields.indexOf(f) >= 0; });
+				}
+			}, this);
+			if( allowedFields === null ) { return; }
+			this.el.find(".uiQueryFilter-filters .uiSidebarSection").each(function() {
+				var fieldName = $(this).find(".uiSidebarSection-title").text();
+				$(this).toggle( allowedFields.indexOf(fieldName) >= 0 );
+			});
 		},
 		_selectType_handler: function(jEv) {
 			var jEl = $(jEv.target).closest(".uiQueryFilter-type");
@@ -3274,6 +3301,7 @@
 			interactive: true,
 			aliasRenderer: "list",
 			scaleReplicas: 1,
+			layout: "nodes",    // "nodes" = rows are nodes (default), "indices" = rows are indices
 			cluster: null,
 			data: null
 		},
@@ -3413,9 +3441,11 @@
 
 		_replica_template: function(replica) {
 			var r = replica.replica;
+			var stateClass = r.relocating_destination ? "state-RELOCATING-DEST" : ("state-" + r.state);
 			return { tag: "DIV",
-				cls: "uiNodesView-replica" + (r.primary ? " primary" : "") + ( " state-" + r.state ),
+				cls: "uiNodesView-replica" + (r.primary ? " primary" : "") + " " + stateClass,
 				text: r.shard.toString(),
+				title: r.relocating_destination ? "Relocating here from " + r.node : (r.state + (r.relocating_node ? " → " + r.relocating_node : "")),
 				onclick: function() { new ui.JsonPanel({
 					json: replica.status || r,
 					title: r.index + "/" + r.node + " [" + r.shard + "]" });
@@ -3561,7 +3591,39 @@
 				}, this ) ) };
 			}, this )	};
 		},
+		_nodeHeader_template: function( node ) {
+			if( node.name === "Unassigned" ) {
+				return { tag: "TH", cls: "uiNodesView-nodeHeader", children: [{ tag: "H3", text: node.name }] };
+			}
+			return { tag: "TH", cls: "uiNodesView-nodeHeader" + (node.master_node ? " master" : ""), children: [
+				{ tag: "SPAN", cls: "fa fa-lg " + ("fa-" + (node.master_node ? "star" : "circle") + (node.data_node ? "" : "-o")) },
+				{ tag: "H3", text: node.cluster.name },
+				{ tag: "DIV", text: node.cluster.hostname || "" }
+			] };
+		},
+		_indexRow_template: function( index, indexIndex, nodes ) {
+			var closed = index && index.state === "close";
+			return { tag: "TR", cls: "uiNodesView-indexRow" + (closed ? " close" : ""), children: [
+				this._indexHeader_template( index )
+			].concat( nodes.map(function(node) {
+				var routing = node.routings[ indexIndex ] || { name: (index && index.name) || "", replicas: [], open: !closed };
+				return this._routing_template( routing );
+			}, this))};
+		},
 		_main_template: function(cluster, indices) {
+			if( this.config.layout === "indices" ) {
+				// Flipped: rows = indices, columns = nodes
+				return { tag: "TABLE", cls: "table uiNodesView uiNodesView-indicesLayout", children: [
+					this._styleSheetEl,
+					{ tag: "THEAD", children: [{ tag: "TR", children:
+						[{ tag: "TH" }].concat( cluster.nodes.map(this._nodeHeader_template, this) )
+					}]},
+					{ tag: "TBODY", children: indices.slice(1).map(function(index, i) {
+						return this._indexRow_template( index, i + 1, cluster.nodes );
+					}, this)}
+				] };
+			}
+			// Default: rows = nodes, columns = indices
 			return { tag: "TABLE", cls: "table uiNodesView", children: [
 				this._styleSheetEl,
 				{ tag: "THEAD", children: [ { tag: "TR", children: indices.map(this._indexHeader_template, this) } ] },
@@ -3721,6 +3783,33 @@
 					this.draw_handler();
 				}.bind(this)
 			});
+			this._layout = this.prefs.get("clusterOverview-layout") || "nodes";
+			this._layoutMenu = new ui.MenuButton({
+				label: i18n.text("Overview.Layout"),
+				menu: new ui.SelectMenuPanel({
+					value: this._layout,
+					items: [
+						{ value: "nodes", text: i18n.text("Overview.LayoutNodes") },
+						{ value: "indices", text: i18n.text("Overview.LayoutIndices") }
+					],
+					onSelect: function(panel, event) {
+						this._layout = event.value;
+						this.prefs.set("clusterOverview-layout", this._layout);
+						this.draw_handler();
+					}.bind(this)
+				})
+			});
+			this._compact = this.prefs.get("clusterOverview-compact") || false;
+			this._compactButton = new ui.Button({
+				label: i18n.text("Overview.Compact"),
+				cls: this._compact ? "active" : "",
+				onclick: function() {
+					this._compact = !this._compact;
+					this.prefs.set("clusterOverview-compact", this._compact);
+					this._compactButton.el.toggleClass("active", this._compact);
+					this.draw_handler();
+				}.bind(this)
+			});
 			this.el = $(this._main_template());
 			this.tablEl = this.el.find(".uiClusterOverview-table");
 			this.refresh();
@@ -3804,18 +3893,27 @@
 						var node = replica.node;
 						if(node === null) { node = "Unassigned"; }
 						var index = replica.index;
-						var shard = replica.shard;
+						var shardNum = replica.shard;
 						var routings = nodes[getIndexForNode(node)].routings;
 						var indexIndex = getIndexForIndex(routings, index);
 						var replicas = routings[indexIndex].replicas;
-						if(node === "Unassigned" || !indexObject.shards[shard]) {
+						if(node === "Unassigned" || !indexObject.shards[shardNum]) {
 							replicas.push({ replica: replica });
 						} else {
-							replicas[shard] = {
+							replicas[shardNum] = {
 								replica: replica,
-								status: indexObject.shards[shard].filter(function(replica) {
-									return replica.node === node;
+								status: indexObject.shards[shardNum].filter(function(r) {
+									return r.node === node;
 								})[0]
+							};
+						}
+						// Also render relocating shards at the destination node (#130)
+						if( replica.state === "RELOCATING" && replica.relocating_node ) {
+							var destRoutings = nodes[getIndexForNode(replica.relocating_node)].routings;
+							var destIndexIndex = getIndexForIndex(destRoutings, index);
+							destRoutings[destIndexIndex].replicas[shardNum] = {
+								replica: $.extend({}, replica, { relocating_destination: true }),
+								status: null
 							};
 						}
 					});
@@ -3881,6 +3979,8 @@
 				}.bind(this),
 				interactive: ( this._refreshButton.value === -1 ),
 				aliasRenderer: this._aliasRenderer,
+				layout: this._layout,
+				scaleReplicas: this._compact ? 0.6 : 1,
 				cluster: this.cluster,
 				data: {
 					cluster: cluster,
@@ -3898,7 +3998,9 @@
 						this._indicesSortMenu,
 						this._aliasMenu,
 						this._indexFilter,
-						this._problemsButton
+						this._problemsButton,
+						this._layoutMenu,
+						this._compactButton
 					],
 					right: [
 						this._refreshButton

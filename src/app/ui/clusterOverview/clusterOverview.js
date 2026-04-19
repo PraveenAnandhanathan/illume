@@ -145,6 +145,33 @@
 					this.draw_handler();
 				}.bind(this)
 			});
+			this._layout = this.prefs.get("clusterOverview-layout") || "nodes";
+			this._layoutMenu = new ui.MenuButton({
+				label: i18n.text("Overview.Layout"),
+				menu: new ui.SelectMenuPanel({
+					value: this._layout,
+					items: [
+						{ value: "nodes", text: i18n.text("Overview.LayoutNodes") },
+						{ value: "indices", text: i18n.text("Overview.LayoutIndices") }
+					],
+					onSelect: function(panel, event) {
+						this._layout = event.value;
+						this.prefs.set("clusterOverview-layout", this._layout);
+						this.draw_handler();
+					}.bind(this)
+				})
+			});
+			this._compact = this.prefs.get("clusterOverview-compact") || false;
+			this._compactButton = new ui.Button({
+				label: i18n.text("Overview.Compact"),
+				cls: this._compact ? "active" : "",
+				onclick: function() {
+					this._compact = !this._compact;
+					this.prefs.set("clusterOverview-compact", this._compact);
+					this._compactButton.el.toggleClass("active", this._compact);
+					this.draw_handler();
+				}.bind(this)
+			});
 			this.el = $(this._main_template());
 			this.tablEl = this.el.find(".uiClusterOverview-table");
 			this.refresh();
@@ -228,18 +255,27 @@
 						var node = replica.node;
 						if(node === null) { node = "Unassigned"; }
 						var index = replica.index;
-						var shard = replica.shard;
+						var shardNum = replica.shard;
 						var routings = nodes[getIndexForNode(node)].routings;
 						var indexIndex = getIndexForIndex(routings, index);
 						var replicas = routings[indexIndex].replicas;
-						if(node === "Unassigned" || !indexObject.shards[shard]) {
+						if(node === "Unassigned" || !indexObject.shards[shardNum]) {
 							replicas.push({ replica: replica });
 						} else {
-							replicas[shard] = {
+							replicas[shardNum] = {
 								replica: replica,
-								status: indexObject.shards[shard].filter(function(replica) {
-									return replica.node === node;
+								status: indexObject.shards[shardNum].filter(function(r) {
+									return r.node === node;
 								})[0]
+							};
+						}
+						// Also render relocating shards at the destination node (#130)
+						if( replica.state === "RELOCATING" && replica.relocating_node ) {
+							var destRoutings = nodes[getIndexForNode(replica.relocating_node)].routings;
+							var destIndexIndex = getIndexForIndex(destRoutings, index);
+							destRoutings[destIndexIndex].replicas[shardNum] = {
+								replica: $.extend({}, replica, { relocating_destination: true }),
+								status: null
 							};
 						}
 					});
@@ -305,6 +341,8 @@
 				}.bind(this),
 				interactive: ( this._refreshButton.value === -1 ),
 				aliasRenderer: this._aliasRenderer,
+				layout: this._layout,
+				scaleReplicas: this._compact ? 0.6 : 1,
 				cluster: this.cluster,
 				data: {
 					cluster: cluster,
@@ -322,7 +360,9 @@
 						this._indicesSortMenu,
 						this._aliasMenu,
 						this._indexFilter,
-						this._problemsButton
+						this._problemsButton,
+						this._layoutMenu,
+						this._compactButton
 					],
 					right: [
 						this._refreshButton

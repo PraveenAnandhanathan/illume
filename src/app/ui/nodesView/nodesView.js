@@ -8,6 +8,7 @@
 			interactive: true,
 			aliasRenderer: "list",
 			scaleReplicas: 1,
+			layout: "nodes",    // "nodes" = rows are nodes (default), "indices" = rows are indices
 			cluster: null,
 			data: null
 		},
@@ -147,9 +148,11 @@
 
 		_replica_template: function(replica) {
 			var r = replica.replica;
+			var stateClass = r.relocating_destination ? "state-RELOCATING-DEST" : ("state-" + r.state);
 			return { tag: "DIV",
-				cls: "uiNodesView-replica" + (r.primary ? " primary" : "") + ( " state-" + r.state ),
+				cls: "uiNodesView-replica" + (r.primary ? " primary" : "") + " " + stateClass,
 				text: r.shard.toString(),
+				title: r.relocating_destination ? "Relocating here from " + r.node : (r.state + (r.relocating_node ? " → " + r.relocating_node : "")),
 				onclick: function() { new ui.JsonPanel({
 					json: replica.status || r,
 					title: r.index + "/" + r.node + " [" + r.shard + "]" });
@@ -295,7 +298,39 @@
 				}, this ) ) };
 			}, this )	};
 		},
+		_nodeHeader_template: function( node ) {
+			if( node.name === "Unassigned" ) {
+				return { tag: "TH", cls: "uiNodesView-nodeHeader", children: [{ tag: "H3", text: node.name }] };
+			}
+			return { tag: "TH", cls: "uiNodesView-nodeHeader" + (node.master_node ? " master" : ""), children: [
+				{ tag: "SPAN", cls: "fa fa-lg " + ("fa-" + (node.master_node ? "star" : "circle") + (node.data_node ? "" : "-o")) },
+				{ tag: "H3", text: node.cluster.name },
+				{ tag: "DIV", text: node.cluster.hostname || "" }
+			] };
+		},
+		_indexRow_template: function( index, indexIndex, nodes ) {
+			var closed = index && index.state === "close";
+			return { tag: "TR", cls: "uiNodesView-indexRow" + (closed ? " close" : ""), children: [
+				this._indexHeader_template( index )
+			].concat( nodes.map(function(node) {
+				var routing = node.routings[ indexIndex ] || { name: (index && index.name) || "", replicas: [], open: !closed };
+				return this._routing_template( routing );
+			}, this))};
+		},
 		_main_template: function(cluster, indices) {
+			if( this.config.layout === "indices" ) {
+				// Flipped: rows = indices, columns = nodes
+				return { tag: "TABLE", cls: "table uiNodesView uiNodesView-indicesLayout", children: [
+					this._styleSheetEl,
+					{ tag: "THEAD", children: [{ tag: "TR", children:
+						[{ tag: "TH" }].concat( cluster.nodes.map(this._nodeHeader_template, this) )
+					}]},
+					{ tag: "TBODY", children: indices.slice(1).map(function(index, i) {
+						return this._indexRow_template( index, i + 1, cluster.nodes );
+					}, this)}
+				] };
+			}
+			// Default: rows = nodes, columns = indices
 			return { tag: "TABLE", cls: "table uiNodesView", children: [
 				this._styleSheetEl,
 				{ tag: "THEAD", children: [ { tag: "TR", children: indices.map(this._indexHeader_template, this) } ] },

@@ -14,7 +14,8 @@
 			data: function( DataSourceInterface )
 		 */
 		_getSummary: function(res) {
-			this.summary = i18n.text("TableResults.Summary", res._shards.successful, res._shards.total, (typeof res.hits.total === 'object') ? res.hits.total.value : res.hits.total, (res.took / 1000).toFixed(3));
+			var total = (typeof res.hits.total === 'object') ? res.hits.total.value : res.hits.total;
+			this.summary = i18n.text("TableResults.Summary", res._shards.successful.toLocaleString(), res._shards.total.toLocaleString(), total.toLocaleString(), (res.took / 1000).toFixed(3));
 		},
 		_getMeta: function(res) {
 			this.meta = { total: res.hits.total, shards: res._shards, tool: res.took };

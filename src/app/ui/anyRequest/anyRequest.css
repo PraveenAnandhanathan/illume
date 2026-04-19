@@ -12,6 +12,16 @@
 	width: 340px;
 }
 
+.uiAnyRequest-request TEXTAREA[name=body] {
+	resize: vertical;
+	min-height: 120px;
+}
+
+.uiAnyRequest-request TEXTAREA[name=transform] {
+	resize: vertical;
+	min-height: 60px;
+}
+
 .anyRequest INPUT[name=path] {
 	width: 259px;
 }

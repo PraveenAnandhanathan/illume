@@ -49,7 +49,33 @@
 					}
 				});
 			}
+			this._updateVisibleFields();
 			this.requestUpdate(jEv);
+		},
+		_updateVisibleFields: function() {
+			var selectedIndices = this.query.indices;
+			if( selectedIndices.length === 0 ) {
+				// No index selected — show all fields
+				this.el.find(".uiQueryFilter-filters .uiSidebarSection").show();
+				return;
+			}
+			// Build set of field names present in ALL selected indices
+			var allowedFields = null;
+			selectedIndices.forEach(function(indexName) {
+				var indexMeta = this.metadata.indices[indexName];
+				if( !indexMeta ) { return; }
+				var indexFields = Object.keys(indexMeta.fields);
+				if( allowedFields === null ) {
+					allowedFields = indexFields;
+				} else {
+					allowedFields = allowedFields.filter(function(f) { return indexFields.indexOf(f) >= 0; });
+				}
+			}, this);
+			if( allowedFields === null ) { return; }
+			this.el.find(".uiQueryFilter-filters .uiSidebarSection").each(function() {
+				var fieldName = $(this).find(".uiSidebarSection-title").text();
+				$(this).toggle( allowedFields.indexOf(fieldName) >= 0 );
+			});
 		},
 		_selectType_handler: function(jEv) {
 			var jEl = $(jEv.target).closest(".uiQueryFilter-type");

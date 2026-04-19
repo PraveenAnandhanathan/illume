@@ -2,9 +2,16 @@
 	border-collapse: collapse;
 }
 
+.uiTable {
+	display: flex;
+	flex-direction: column;
+	overflow: hidden;
+}
+
 .uiTable-body {
 	overflow-y: scroll;
 	overflow-x: auto;
+	flex: 1 1 auto;
 }
 
 .uiTable-headers {
