@@ -1,0 +1,30 @@
+version: "3.8"
+
+services:
+  illume:
+    build: .
+    ports:
+      - "9100:9100"
+    environment:
+      # Set ES_HOST to your Elasticsearch URL
+      ES_HOST: "http://elasticsearch:9200"
+    depends_on:
+      - elasticsearch
+
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.12.0
+    environment:
+      - discovery.type=single-node
+      - xpack.security.enabled=false
+      # ES8 CORS — required for illume to connect
+      - http.cors.enabled=true
+      - http.cors.allow-origin=http://localhost:9100
+      - http.cors.allow-headers=Authorization,Content-Type,X-Requested-With
+      - http.cors.allow-credentials=true
+    ports:
+      - "9200:9200"
+    volumes:
+      - esdata:/usr/share/elasticsearch/data
+
+volumes:
+  esdata:

@@ -15,6 +15,7 @@
 			this._super();
 			this.prefs = services.Preferences.instance();
 			this.history = this.prefs.get("anyRequest-history") || [ { type: "POST", path: this.config.path, query : JSON.stringify(this.config.query), transform: this.config.transform } ];
+			this.savedQueries = this.prefs.get("anyRequest-saved") || [];
 			this.el = $.joey(this._main_template());
 			this.base_uriEl = this.el.find("INPUT[name=base_uri]");
 			this.pathEl = this.el.find("INPUT[name=path]");
@@ -31,12 +32,53 @@
 			this.typeEl.val("GET");
 			this.attach(parent);
 			this.setHistoryItem(this.history[this.history.length - 1]);
+			this._renderSavedQueries();
 		},
 		setHistoryItem: function(item) {
 			this.pathEl.val(item.path);
 			this.typeEl.val(item.type);
 			this.dataEl.val(item.query);
 			this.transformEl.val(item.transform);
+		},
+		_saveQuery_handler: function() {
+			var name = window.prompt(i18n.text("AnyRequest.SaveQueryName"));
+			if( !name ) { return; }
+			var item = {
+				name: name,
+				path: this.pathEl.val(),
+				type: this.typeEl.val(),
+				query: this.dataEl.val(),
+				transform: this.transformEl.val()
+			};
+			// Replace existing saved query with same name, or push new
+			var idx = -1;
+			this.savedQueries.forEach(function(q, i) { if(q.name === name) { idx = i; } });
+			if( idx >= 0 ) { this.savedQueries[idx] = item; } else { this.savedQueries.push(item); }
+			this.prefs.set("anyRequest-saved", this.savedQueries);
+			this._renderSavedQueries();
+		},
+		_deleteSavedQuery_handler: function(name) {
+			this.savedQueries = this.savedQueries.filter(function(q) { return q.name !== name; });
+			this.prefs.set("anyRequest-saved", this.savedQueries);
+			this._renderSavedQueries();
+		},
+		_renderSavedQueries: function() {
+			var self = this;
+			var list = this.el.find(".uiAnyRequest-savedList").empty();
+			if( this.savedQueries.length === 0 ) {
+				list.append($("<span>").css("color","#999").text(i18n.text("AnyRequest.NoSavedQueries")));
+				return;
+			}
+			this.savedQueries.forEach(function(q) {
+				var item = $("<li>").addClass("booble");
+				$("<span>").text(q.name).css("cursor","pointer").on("click", function() {
+					self.setHistoryItem(q);
+				}).appendTo(item);
+				$("<a>").text(" [x]").css({color:"red",cursor:"pointer",marginLeft:"4px"}).on("click", function() {
+					self._deleteSavedQuery_handler(q.name);
+				}).appendTo(item);
+				list.append(item);
+			});
 		},
 		_request_handler: function( ev ) {
 			if(! this._validateJson_handler()) {
@@ -94,9 +136,12 @@
 				obj = JSON.parse(response.responseText);
 				if (obj) {
 					this._responseWriter_handler(obj);
+					return;
 				}
 			} catch (err) {
 			}
+			var status = response.status ? (response.status + " " + response.statusText) : i18n.text("AnyRequest.NoResponse");
+			this.outEl.text(i18n.text("AnyRequest.Error") + ": " + status);
 		},
 		_responseWriter_handler: function(data) {
 			this.outEl.empty();
@@ -176,9 +221,15 @@
 							{ tag: "TEXTAREA", name: "body", rows: 20, text: JSON.stringify(this.config.query) },
 							{ tag: "BUTTON", css: { cssFloat: "right" }, type: "button", children: [ { tag: "B", text: i18n.text("AnyRequest.Request") } ], onclick: this._request_handler },
 							{ tag: "BUTTON", type: "button", text: i18n.text("AnyRequest.ValidateJSON"), onclick: this._validateJson_handler },
+							{ tag: "BUTTON", type: "button", text: i18n.text("AnyRequest.SaveQuery"), onclick: this._saveQuery_handler },
 							{ tag: "LABEL", children: [ { tag: "INPUT", type: "checkbox", name: "pretty" }, i18n.text("AnyRequest.Pretty") ] },
 							{ tag: "DIV", cls: "uiAnyRequest-jsonErr" }
 						]}
+					}),
+					new app.ui.SidebarSection({
+						open: true,
+						title: i18n.text("AnyRequest.SavedQueries"),
+						body: { tag: "UL", cls: "uiAnyRequest-savedList" }
 					}),
 					new app.ui.SidebarSection({
 						title: i18n.text("AnyRequest.Transformer"),

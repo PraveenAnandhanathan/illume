@@ -40,8 +40,11 @@
 				}
 			}
 			if (data[this.config.index]){
-				for(var type in data[this.config.index].mappings) {
-					scan_properties([type], data[this.config.index].mappings[type]);
+				var mappings = data[this.config.index].mappings;
+				// ES8 typeless: properties sits directly under mappings
+				var mappingToProcess = (mappings && mappings.properties) ? { "_doc": mappings } : mappings;
+				for(var type in mappingToProcess) {
+					scan_properties([type], mappingToProcess[type]);
 				}
 			}
 

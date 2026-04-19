@@ -1,25 +1,36 @@
-{  
-    "manifest_version": 2,
-    "name": "elasticsearch-head",  
-    "version": "1.0.8",
-    "background": { 
-      "scripts": ["background.js"],
-      "persistent": false
-    },
-    "icons": {
-      "16": "base/favicon.png"
-    },
-    "content_security_policy": "script-src 'self' 'sha256-Rpn+rjJuXCjZBPOPhhVloRXuzAUBRnAas+6gKVDohs0=' 'unsafe-eval'; object-src 'self';",
-    "description": "Chrome Extension containing the excellent ElasticSearch Head application.",  
-    "browser_action": {  
-      "default_icon": "base/favicon.png" ,
-      "default_title": "es-head"
-    },
-    "content_scripts":[{
-        "all_frames": false,
-        "matches":["*://*/"],
-        "js":["background.js"],
-        "run_at": "document_end"
-    }]
-  } 
-  
+{
+  "manifest_version": 3,
+  "name": "illume — Elasticsearch Head",
+  "version": "2.0.0",
+  "description": "illume: Elasticsearch Head with ES8 compatibility. Browse indices, run queries, manage documents.",
+  "icons": {
+    "16": "base/favicon.png",
+    "48": "base/favicon.png",
+    "128": "base/favicon.png"
+  },
+  "action": {
+    "default_icon": "base/favicon.png",
+    "default_title": "illume",
+    "default_popup": "index.html"
+  },
+  "background": {
+    "service_worker": "background.js"
+  },
+  "permissions": [
+    "storage"
+  ],
+  "host_permissions": [
+    "http://localhost:9200/",
+    "https://localhost:9200/",
+    "<all_urls>"
+  ],
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; object-src 'self';"
+  },
+  "web_accessible_resources": [
+    {
+      "resources": ["index.html", "app.js", "app.css", "vendor.js", "vendor.css", "i18n.js", "lang/*", "base/*", "fonts/*"],
+      "matches": ["<all_urls>"]
+    }
+  ]
+}

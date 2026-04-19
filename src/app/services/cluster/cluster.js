@@ -27,17 +27,27 @@
 			}
 			return true;
 		},
+		setAuth: function( user, password ) {
+			this._authHeader = user ? ("Basic " + window.btoa(user + ":" + password)) : null;
+		},
 		request: function( params ) {
+			var self = this;
 			return $.ajax( $.extend({
 				url: this.base_uri + params.path,
 				contentType: "application/json",
 				dataType: "json",
+				xhrFields: { withCredentials: !!self._authHeader },
+				beforeSend: function( xhr ) {
+					if( self._authHeader ) {
+						xhr.setRequestHeader("Authorization", self._authHeader);
+					}
+				},
 				error: function(xhr, type, message) {
 					if("console" in window) {
 						console.log({ "XHR Error": type, "message": message });
 					}
 				}
-			},  params) );
+			}, params) );
 		},
 		"get": function(path, success, error) { return this.request( { type: "GET", path: path, success: success, error: error } ); },
 		"post": function(path, data, success, error) { return this.request( { type: "POST", path: path, data: data, success: success, error: error } ); },

@@ -11,6 +11,7 @@
 		_baseCls: "uiTable",
 		init: function(parent) {
 			this._super();
+			this._hiddenColumns = {};
 			this.initElements(parent);
 			this.config.store.on("data", this._data_handler);
 		},
@@ -25,13 +26,43 @@
 			this.body = this.el.find(".uiTable-body");
 			this.headers = this.el.find(".uiTable-headers");
 			this.tools = this.el.find(".uiTable-tools");
+			this.colFilter = this.el.find(".uiTable-colFilter");
 			this.attach( parent );
 		},
 		_data_handler: function(store) {
 			this.tools.text(store.summary);
-			this.headers.empty().append(this._header_template(store.columns));
-			this.body.empty().append(this._body_template(store.data, store.columns));
+			this._allColumns = store.columns;
+			this._renderColFilter(store.columns);
+			var visibleCols = store.columns.filter(function(c) { return !this._hiddenColumns[c]; }, this);
+			this.headers.empty().append(this._header_template(visibleCols));
+			this.body.empty().append(this._body_template(store.data, visibleCols));
 			this._reflow();
+		},
+		_renderColFilter: function(columns) {
+			var self = this;
+			this.colFilter.empty();
+			var toggle = $("<span>").addClass("uiTable-colFilterToggle").text("Columns \u25bc").on("click", function() {
+				self.colFilter.find(".uiTable-colFilterList").toggle();
+			});
+			var list = $("<div>").addClass("uiTable-colFilterList").hide();
+			columns.forEach(function(col) {
+				var cb = $("<input>").attr({ type: "checkbox", checked: !self._hiddenColumns[col] }).on("change", function() {
+					self._hiddenColumns[col] = !this.checked;
+					var visible = self._allColumns.filter(function(c) { return !self._hiddenColumns[c]; });
+					self.headers.empty().append(self._header_template(visible));
+					self.body.find("TABLE").each(function(i, t) {
+						$(t).find("TR").each(function() {
+							$(this).find("TD,TH").each(function(j) {
+								$(this).toggle(!self._hiddenColumns[self._allColumns[j]]);
+							});
+						});
+					});
+					self._reflow();
+				});
+				list.append($("<label>").append(cb).append(" " + col));
+				list.append($("<br>"));
+			});
+			this.colFilter.append(toggle).append(list);
 		},
 		_reflow: function() {
 			var firstCol = this.body.find("TR:first TH.uiTable-header-cell > DIV"),
@@ -59,6 +90,7 @@
 		_main_template: function() {
 			return { tag: "DIV", id: this.id(), css: { width: this.config.width + "px" }, cls: this._baseCls, children: [
 				{ tag: "DIV", cls: "uiTable-tools" },
+				{ tag: "DIV", cls: "uiTable-colFilter" },
 				{ tag: "DIV", cls: "uiTable-headers", onclick: this._headerClick_handler },
 				{ tag: "DIV", cls: "uiTable-body",
 					onclick: this._dataClick_handler,

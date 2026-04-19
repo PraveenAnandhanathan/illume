@@ -134,6 +134,17 @@
 					this.draw_handler();
 				}.bind(this)
 			});
+			this._showProblemsOnly = this.prefs.get("clusterOverview-problemsOnly") || false;
+			this._problemsButton = new ui.Button({
+				label: i18n.text("Overview.ProblemsOnly"),
+				cls: this._showProblemsOnly ? "active" : "",
+				onclick: function() {
+					this._showProblemsOnly = !this._showProblemsOnly;
+					this.prefs.set("clusterOverview-problemsOnly", this._showProblemsOnly);
+					this._problemsButton.el.toggleClass("active", this._showProblemsOnly);
+					this.draw_handler();
+				}.bind(this)
+			});
 			this.el = $(this._main_template());
 			this.tablEl = this.el.find(".uiClusterOverview-table");
 			this.refresh();
@@ -196,7 +207,21 @@
 			});
 			indexNames.sort();
 			if (this._indicesSort === "desc") indexNames.reverse();
-			indexNames.filter( indexFilter ).forEach(function(name) {
+			var self = this;
+			function hasProblemShards(name) {
+				var idx = clusterState.routing_table.indices[name];
+				if( !idx ) { return false; }
+				var problem = false;
+				$.each(idx.shards, function(shard, replicas) {
+					replicas.forEach(function(r) {
+						if( r.state !== "STARTED" ) { problem = true; }
+					});
+				});
+				return problem;
+			}
+			indexNames.filter( indexFilter ).filter(function(name) {
+				return !self._showProblemsOnly || hasProblemShards(name);
+			}).forEach(function(name) {
 				var indexObject = clusterState.routing_table.indices[name];
 				$.each(indexObject.shards, function(name, shard) {
 					shard.forEach(function(replica){
@@ -296,7 +321,8 @@
 						this._nodeSortMenu,
 						this._indicesSortMenu,
 						this._aliasMenu,
-						this._indexFilter
+						this._indexFilter,
+						this._problemsButton
 					],
 					right: [
 						this._refreshButton

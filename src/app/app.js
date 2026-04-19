@@ -15,15 +15,10 @@
 				// XHR request fails if the URL is not ending with a "/"
 				this.base_uri += "/";
 			}
-			if( this.config.auth_user ) {
-				var credentials = window.btoa( this.config.auth_user + ":" + this.config.auth_password );
-				$.ajaxSetup({
-					headers: {
-						"Authorization": "Basic " + credentials
-					}
-				});
-			}
 			this.cluster = new services.Cluster({ base_uri: this.base_uri });
+			if( this.config.auth_user ) {
+				this.cluster.setAuth( this.config.auth_user, this.config.auth_password );
+			}
 			this._clusterState = new services.ClusterState({
 				cluster: this.cluster
 			});

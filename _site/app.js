@@ -635,7 +635,7 @@
 						}
 					}
 					return row;
-				})([ hit._type ], hit, {});
+				})([ hit._type || "_doc" ], hit, {});
 				row._source = hit;
 				return row;
 			}, this);
@@ -792,7 +792,10 @@
 					(aliases[alias] || (aliases[alias] = [])).push(index);
 				});
 				var mapping = state.metadata.indices[index].mappings;
-				for (var type in mapping) {
+				// ES8 removed doc types: properties sits directly under mappings.
+				// Wrap it under a synthetic "_doc" type so the rest of the logic works unchanged.
+				var mappingToProcess = (mapping && mapping.properties) ? { "_doc": mapping } : mapping;
+				for (var type in mappingToProcess) {
 					indices[index].types.push(type);
 					if ( type in types) {
 						types[type].indices.push(index);
@@ -801,9 +804,9 @@
 							indices : [index], fields : {}
 						};
 					}
-					getFields(mapping[type].properties, type, index, [fields, types[type].fields, indices[index].fields]);
-					if ( typeof mapping[type]._parent !== "undefined") {
-						indices[index].parents[type] = mapping[type]._parent.type;
+					getFields(mappingToProcess[type].properties, type, index, [fields, types[type].fields, indices[index].fields]);
+					if ( typeof mappingToProcess[type]._parent !== "undefined") {
+						indices[index].parents[type] = mappingToProcess[type]._parent.type;
 					}
 				}
 			}
@@ -1124,7 +1127,7 @@
 						}
 					}
 					return row;
-				})([ hit._index, hit._type ], hit._source, {});
+				})([ hit._index, hit._type || "_doc" ], hit._source, {});
 				metaColumns.forEach(function(n) { row[n] = hit[n]; });
 				row._source = hit;
 				if (typeof hit._parent!= "undefined") {
@@ -1301,17 +1304,27 @@
 			}
 			return true;
 		},
+		setAuth: function( user, password ) {
+			this._authHeader = user ? ("Basic " + window.btoa(user + ":" + password)) : null;
+		},
 		request: function( params ) {
+			var self = this;
 			return $.ajax( $.extend({
 				url: this.base_uri + params.path,
 				contentType: "application/json",
 				dataType: "json",
+				xhrFields: { withCredentials: !!self._authHeader },
+				beforeSend: function( xhr ) {
+					if( self._authHeader ) {
+						xhr.setRequestHeader("Authorization", self._authHeader);
+					}
+				},
 				error: function(xhr, type, message) {
 					if("console" in window) {
 						console.log({ "XHR Error": type, "message": message });
 					}
 				}
-			},  params) );
+			}, params) );
 		},
 		"get": function(path, success, error) { return this.request( { type: "GET", path: path, success: success, error: error } ); },
 		"post": function(path, data, success, error) { return this.request( { type: "POST", path: path, data: data, success: success, error: error } ); },
@@ -1340,25 +1353,27 @@
 		},
 		refresh: function() {
 			var self = this, clusterState, status, nodeStats, clusterNodes, clusterHealth;
+			// Track which requests have resolved (success or handled failure)
+			var resolved = { clusterState: false, status: false, nodeStats: false, clusterNodes: false, clusterHealth: false };
 			function updateModel() {
-				if( clusterState && status && nodeStats && clusterNodes && clusterHealth ) {
-					this.clusterState = clusterState;
-					this.status = status;
-					this.nodeStats = nodeStats;
-					this.clusterNodes = clusterNodes;
-					this.clusterHealth = clusterHealth;
-					this.fire( "data", this );
+				// Fire once all requests have resolved — even those that failed gracefully
+				if( resolved.clusterState && resolved.status && resolved.nodeStats && resolved.clusterNodes && resolved.clusterHealth ) {
+					self.clusterState = clusterState;
+					self.status = status || { _shards: { successful: 0, total: 0 }, indices: {} };
+					self.nodeStats = nodeStats || { nodes: {} };
+					self.clusterNodes = clusterNodes || { nodes: {} };
+					self.clusterHealth = clusterHealth || { status: "grey" };
+					self.fire( "data", self );
 				}
 			}
 			var _cluster = this.cluster;
 			_cluster.get("_cluster/state", function( data ) {
 				clusterState = data;
-				updateModel.call( self );
-			},function() {
-				
+				resolved.clusterState = true;
+				updateModel();
+			}, function() {
 				_cluster.get("_all", function( data ) {
 					clusterState = {routing_table:{indices:{}}, metadata:{indices:{}}};
-					
 					for(var k in data) {
 						clusterState["routing_table"]["indices"][k] = {"shards":{"1":[{
                             "state":"UNASSIGNED",
@@ -1368,33 +1383,52 @@
                             "shard":'?',
                             "index":k
                         }]}};
-						
-
 						clusterState["metadata"]["indices"][k] = {};
 						clusterState["metadata"]["indices"][k]["mappings"] = data[k]["mappings"];
 						clusterState["metadata"]["indices"][k]["aliases"] = $.makeArray(Object.keys(data[k]["aliases"]));
 						clusterState["metadata"]["indices"][k]["settings"] = data[k]["settings"];
 					}
-					
-					updateModel.call( self );
+					resolved.clusterState = true;
+					updateModel();
+				}, function() {
+					// Both _cluster/state and _all failed — mark resolved with empty state
+					clusterState = {routing_table:{indices:{}}, metadata:{indices:{}}};
+					resolved.clusterState = true;
+					updateModel();
 				});
-				
 			});
 			this.cluster.get("_stats", function( data ) {
 				status = data;
-				updateModel.call( self );
+				resolved.status = true;
+				updateModel();
+			}, function() {
+				// _stats may return 403 with xpack basic — treat as non-fatal
+				resolved.status = true;
+				updateModel();
 			});
 			this.cluster.get("_nodes/stats", function( data ) {
 				nodeStats = data;
-				updateModel.call( self );
+				resolved.nodeStats = true;
+				updateModel();
+			}, function() {
+				resolved.nodeStats = true;
+				updateModel();
 			});
 			this.cluster.get("_nodes", function( data ) {
 				clusterNodes = data;
-				updateModel.call( self );
+				resolved.clusterNodes = true;
+				updateModel();
+			}, function() {
+				resolved.clusterNodes = true;
+				updateModel();
 			});
 			this.cluster.get("_cluster/health", function( data ) {
 				clusterHealth = data;
-				updateModel.call( self );
+				resolved.clusterHealth = true;
+				updateModel();
+			}, function() {
+				resolved.clusterHealth = true;
+				updateModel();
 			});
 		},
 		_clusterState_handler: function(state) {
@@ -2023,6 +2057,7 @@
 		_baseCls: "uiTable",
 		init: function(parent) {
 			this._super();
+			this._hiddenColumns = {};
 			this.initElements(parent);
 			this.config.store.on("data", this._data_handler);
 		},
@@ -2037,13 +2072,43 @@
 			this.body = this.el.find(".uiTable-body");
 			this.headers = this.el.find(".uiTable-headers");
 			this.tools = this.el.find(".uiTable-tools");
+			this.colFilter = this.el.find(".uiTable-colFilter");
 			this.attach( parent );
 		},
 		_data_handler: function(store) {
 			this.tools.text(store.summary);
-			this.headers.empty().append(this._header_template(store.columns));
-			this.body.empty().append(this._body_template(store.data, store.columns));
+			this._allColumns = store.columns;
+			this._renderColFilter(store.columns);
+			var visibleCols = store.columns.filter(function(c) { return !this._hiddenColumns[c]; }, this);
+			this.headers.empty().append(this._header_template(visibleCols));
+			this.body.empty().append(this._body_template(store.data, visibleCols));
 			this._reflow();
+		},
+		_renderColFilter: function(columns) {
+			var self = this;
+			this.colFilter.empty();
+			var toggle = $("<span>").addClass("uiTable-colFilterToggle").text("Columns \u25bc").on("click", function() {
+				self.colFilter.find(".uiTable-colFilterList").toggle();
+			});
+			var list = $("<div>").addClass("uiTable-colFilterList").hide();
+			columns.forEach(function(col) {
+				var cb = $("<input>").attr({ type: "checkbox", checked: !self._hiddenColumns[col] }).on("change", function() {
+					self._hiddenColumns[col] = !this.checked;
+					var visible = self._allColumns.filter(function(c) { return !self._hiddenColumns[c]; });
+					self.headers.empty().append(self._header_template(visible));
+					self.body.find("TABLE").each(function(i, t) {
+						$(t).find("TR").each(function() {
+							$(this).find("TD,TH").each(function(j) {
+								$(this).toggle(!self._hiddenColumns[self._allColumns[j]]);
+							});
+						});
+					});
+					self._reflow();
+				});
+				list.append($("<label>").append(cb).append(" " + col));
+				list.append($("<br>"));
+			});
+			this.colFilter.append(toggle).append(list);
 		},
 		_reflow: function() {
 			var firstCol = this.body.find("TR:first TH.uiTable-header-cell > DIV"),
@@ -2071,6 +2136,7 @@
 		_main_template: function() {
 			return { tag: "DIV", id: this.id(), css: { width: this.config.width + "px" }, cls: this._baseCls, children: [
 				{ tag: "DIV", cls: "uiTable-tools" },
+				{ tag: "DIV", cls: "uiTable-colFilter" },
 				{ tag: "DIV", cls: "uiTable-headers", onclick: this._headerClick_handler },
 				{ tag: "DIV", cls: "uiTable-body",
 					onclick: this._dataClick_handler,
@@ -2411,7 +2477,8 @@
 	ui.ResultTable = ui.Table.extend({
 		defaults: {
 			width: 500,
-			height: 400
+			height: 400,
+			cluster: null
 		},
 
 		init: function() {
@@ -2441,6 +2508,27 @@
 				onClose: function() { row.removeClass("selected"); }
 			});
 		},
+		_deleteDoc_handler: function(ev) {
+			ev.stopPropagation();
+			var row = $(ev.target).closest("TR");
+			var hit = row.data("row");
+			if( !hit || !hit._source ) { return; }
+			var src = hit._source;
+			var index = src._index;
+			var id = src._id;
+			if( !index || !id ) { return; }
+			if( !window.confirm( i18n.text("Browser.DeleteConfirm", index, id) ) ) { return; }
+			var cluster = this.config.cluster;
+			if( !cluster ) { return; }
+			cluster["delete"]( index + "/_doc/" + id, null,
+				function() {
+					row.fadeOut(300, function() { row.remove(); });
+				},
+				function() {
+					alert( i18n.text("Browser.DeleteFailed") );
+				}
+			);
+		},
 		_nav_handler: function(jEv) {
 			if(jEv.keyCode !== 40 && jEv.keyCode !== 38) {
 				return;
@@ -2455,6 +2543,33 @@
 		},
 		_showPreview_handler: function(obj, data) {
 			this.showPreview(this.selectedRow = data.row);
+		},
+		// Override body template to add a Delete button column
+		_body_template: function(data, columns) {
+			var self = this;
+			var hasCluster = !!this.config.cluster;
+			return { tag: "TABLE", children: []
+				.concat(this._headerRow_template(columns, hasCluster))
+				.concat(data.map(function(row) {
+					var cells = columns.map(function(column){
+						return { tag: "TD", cls: "uiTable-cell", children: [ { tag: "DIV", text: (row[column] || "").toString() } ] };
+					});
+					if( hasCluster ) {
+						cells.push({ tag: "TD", cls: "uiTable-cell uiTable-deleteCell", children: [
+							{ tag: "BUTTON", type: "button", cls: "uiTable-deleteBtn", text: i18n.text("Browser.Delete"),
+								onclick: self._deleteDoc_handler }
+						]});
+					}
+					return { tag: "TR", data: { row: row }, cls: "uiTable-row", children: cells };
+				}))
+			};
+		},
+		_headerRow_template: function(columns, hasDeleteCol) {
+			var row = this._super(columns);
+			if( hasDeleteCol ) {
+				row.children.push({ tag: "TH", cls: "uiTable-header-cell uiTable-deleteCell", children: [{ tag: "DIV", children: [{ tag: "DIV", cls: "uiTable-headercell-text", text: "" }] }] });
+			}
+			return row;
 		}
 	});
 
@@ -2764,24 +2879,29 @@
 		init: function() {
 			this._super();
 			this.cluster = this.config.cluster;
-			this.query = new app.data.Query( { cluster: this.cluster } );
+			this.prefs = services.Preferences.instance();
+			this._pageSize = this.prefs.get("browser-pageSize") || 50;
+			this._currentPage = 1;
+			this.query = new app.data.Query( { cluster: this.cluster, size: this._pageSize } );
 			this._refreshButton = new ui.Button({
 				label: i18n.text("General.RefreshResults"),
-				onclick: function( btn ) {
-					this.query.query();
-				}.bind(this)
+				onclick: function() { this._currentPage = 1; this.query.setPage(1); this.query.query(); }.bind(this)
 			});
 			this.el = $(this._main_template());
+			this._pageSizeEl = this.el.find(".uiBrowser-pageSize");
+			this._pageInfoEl = this.el.find(".uiBrowser-pageInfo");
 			new data.MetaDataFactory({
 				cluster: this.cluster,
 				onReady: function(metadata) {
 					this.metadata = metadata;
 					this.store = new data.QueryDataSourceInterface( { metadata: metadata, query: this.query } );
+					this.store.on("data", this._updatePageInfo.bind(this));
 					this.queryFilter = new ui.QueryFilter({ metadata: metadata, query: this.query });
 					this.queryFilter.attach(this.el.find("> .uiBrowser-filter") );
 					this.resultTable = new ui.ResultTable( {
 						onHeaderClick: this._changeSort_handler,
-						store: this.store
+						store: this.store,
+						cluster: this.cluster
 					} );
 					this.resultTable.attach( this.el.find("> .uiBrowser-table") );
 					this.updateResults();
@@ -2791,12 +2911,43 @@
 		updateResults: function() {
 			this.query.query();
 		},
+		_updatePageInfo: function() {
+			var total = this.store.meta && this.store.meta.total;
+			if( total && typeof total === "object" ) { total = total.value; }
+			total = total || 0;
+			var totalPages = Math.max(1, Math.ceil(total / this._pageSize));
+			this._pageInfoEl.text( "Page " + this._currentPage + " / " + totalPages + "  (" + total + " hits)" );
+			this.el.find(".uiBrowser-prevPage").prop("disabled", this._currentPage <= 1);
+			this.el.find(".uiBrowser-nextPage").prop("disabled", this._currentPage >= totalPages);
+		},
 		_changeSort_handler: function(table, wEv) {
 			this.query.setSort(wEv.column, wEv.dir === "desc");
+			this._currentPage = 1;
+			this.query.setPage(1);
+			this.query.query();
+		},
+		_prevPage_handler: function() {
+			if( this._currentPage <= 1 ) { return; }
+			this._currentPage--;
+			this.query.setPage(this._currentPage);
+			this.query.query();
+		},
+		_nextPage_handler: function() {
+			this._currentPage++;
+			this.query.setPage(this._currentPage);
+			this.query.query();
+		},
+		_changePageSize_handler: function() {
+			this._pageSize = parseInt(this._pageSizeEl.val(), 10) || 50;
+			this.prefs.set("browser-pageSize", this._pageSize);
+			this.query.config.size = this._pageSize;
+			this.query.search.size = this._pageSize;
+			this._currentPage = 1;
 			this.query.setPage(1);
 			this.query.query();
 		},
 		_main_template: function() {
+			var self = this;
 			return { tag: "DIV", cls: "uiBrowser", children: [
 				new ui.Toolbar({
 					label: i18n.text("Browser.Title"),
@@ -2804,6 +2955,20 @@
 					right: [ this._refreshButton ]
 				}),
 				{ tag: "DIV", cls: "uiBrowser-filter" },
+				{ tag: "DIV", cls: "uiBrowser-pagination", children: [
+					{ tag: "BUTTON", type: "button", cls: "uiBrowser-prevPage", text: "\u25c4 " + i18n.text("Browser.PrevPage"),
+						onclick: function() { self._prevPage_handler(); } },
+					{ tag: "SPAN", cls: "uiBrowser-pageInfo" },
+					{ tag: "BUTTON", type: "button", cls: "uiBrowser-nextPage", text: i18n.text("Browser.NextPage") + " \u25ba",
+						onclick: function() { self._nextPage_handler(); } },
+					" " + i18n.text("Browser.PageSize") + " ",
+					{ tag: "SELECT", cls: "uiBrowser-pageSize",
+						onchange: function() { self._changePageSize_handler(); },
+						children: [10, 25, 50, 100, 250, 500].map(function(n) {
+							return { tag: "OPTION", value: n, text: n, selected: n === self._pageSize };
+						})
+					}
+				]},
 				{ tag: "DIV", cls: "uiBrowser-table" }
 			] };
 		}
@@ -2828,6 +2993,7 @@
 			this._super();
 			this.prefs = services.Preferences.instance();
 			this.history = this.prefs.get("anyRequest-history") || [ { type: "POST", path: this.config.path, query : JSON.stringify(this.config.query), transform: this.config.transform } ];
+			this.savedQueries = this.prefs.get("anyRequest-saved") || [];
 			this.el = $.joey(this._main_template());
 			this.base_uriEl = this.el.find("INPUT[name=base_uri]");
 			this.pathEl = this.el.find("INPUT[name=path]");
@@ -2844,12 +3010,53 @@
 			this.typeEl.val("GET");
 			this.attach(parent);
 			this.setHistoryItem(this.history[this.history.length - 1]);
+			this._renderSavedQueries();
 		},
 		setHistoryItem: function(item) {
 			this.pathEl.val(item.path);
 			this.typeEl.val(item.type);
 			this.dataEl.val(item.query);
 			this.transformEl.val(item.transform);
+		},
+		_saveQuery_handler: function() {
+			var name = window.prompt(i18n.text("AnyRequest.SaveQueryName"));
+			if( !name ) { return; }
+			var item = {
+				name: name,
+				path: this.pathEl.val(),
+				type: this.typeEl.val(),
+				query: this.dataEl.val(),
+				transform: this.transformEl.val()
+			};
+			// Replace existing saved query with same name, or push new
+			var idx = -1;
+			this.savedQueries.forEach(function(q, i) { if(q.name === name) { idx = i; } });
+			if( idx >= 0 ) { this.savedQueries[idx] = item; } else { this.savedQueries.push(item); }
+			this.prefs.set("anyRequest-saved", this.savedQueries);
+			this._renderSavedQueries();
+		},
+		_deleteSavedQuery_handler: function(name) {
+			this.savedQueries = this.savedQueries.filter(function(q) { return q.name !== name; });
+			this.prefs.set("anyRequest-saved", this.savedQueries);
+			this._renderSavedQueries();
+		},
+		_renderSavedQueries: function() {
+			var self = this;
+			var list = this.el.find(".uiAnyRequest-savedList").empty();
+			if( this.savedQueries.length === 0 ) {
+				list.append($("<span>").css("color","#999").text(i18n.text("AnyRequest.NoSavedQueries")));
+				return;
+			}
+			this.savedQueries.forEach(function(q) {
+				var item = $("<li>").addClass("booble");
+				$("<span>").text(q.name).css("cursor","pointer").on("click", function() {
+					self.setHistoryItem(q);
+				}).appendTo(item);
+				$("<a>").text(" [x]").css({color:"red",cursor:"pointer",marginLeft:"4px"}).on("click", function() {
+					self._deleteSavedQuery_handler(q.name);
+				}).appendTo(item);
+				list.append(item);
+			});
 		},
 		_request_handler: function( ev ) {
 			if(! this._validateJson_handler()) {
@@ -2907,9 +3114,12 @@
 				obj = JSON.parse(response.responseText);
 				if (obj) {
 					this._responseWriter_handler(obj);
+					return;
 				}
 			} catch (err) {
 			}
+			var status = response.status ? (response.status + " " + response.statusText) : i18n.text("AnyRequest.NoResponse");
+			this.outEl.text(i18n.text("AnyRequest.Error") + ": " + status);
 		},
 		_responseWriter_handler: function(data) {
 			this.outEl.empty();
@@ -2989,9 +3199,15 @@
 							{ tag: "TEXTAREA", name: "body", rows: 20, text: JSON.stringify(this.config.query) },
 							{ tag: "BUTTON", css: { cssFloat: "right" }, type: "button", children: [ { tag: "B", text: i18n.text("AnyRequest.Request") } ], onclick: this._request_handler },
 							{ tag: "BUTTON", type: "button", text: i18n.text("AnyRequest.ValidateJSON"), onclick: this._validateJson_handler },
+							{ tag: "BUTTON", type: "button", text: i18n.text("AnyRequest.SaveQuery"), onclick: this._saveQuery_handler },
 							{ tag: "LABEL", children: [ { tag: "INPUT", type: "checkbox", name: "pretty" }, i18n.text("AnyRequest.Pretty") ] },
 							{ tag: "DIV", cls: "uiAnyRequest-jsonErr" }
 						]}
+					}),
+					new app.ui.SidebarSection({
+						open: true,
+						title: i18n.text("AnyRequest.SavedQueries"),
+						body: { tag: "UL", cls: "uiAnyRequest-savedList" }
 					}),
 					new app.ui.SidebarSection({
 						title: i18n.text("AnyRequest.Transformer"),
@@ -3494,6 +3710,17 @@
 					this.draw_handler();
 				}.bind(this)
 			});
+			this._showProblemsOnly = this.prefs.get("clusterOverview-problemsOnly") || false;
+			this._problemsButton = new ui.Button({
+				label: i18n.text("Overview.ProblemsOnly"),
+				cls: this._showProblemsOnly ? "active" : "",
+				onclick: function() {
+					this._showProblemsOnly = !this._showProblemsOnly;
+					this.prefs.set("clusterOverview-problemsOnly", this._showProblemsOnly);
+					this._problemsButton.el.toggleClass("active", this._showProblemsOnly);
+					this.draw_handler();
+				}.bind(this)
+			});
 			this.el = $(this._main_template());
 			this.tablEl = this.el.find(".uiClusterOverview-table");
 			this.refresh();
@@ -3556,7 +3783,21 @@
 			});
 			indexNames.sort();
 			if (this._indicesSort === "desc") indexNames.reverse();
-			indexNames.filter( indexFilter ).forEach(function(name) {
+			var self = this;
+			function hasProblemShards(name) {
+				var idx = clusterState.routing_table.indices[name];
+				if( !idx ) { return false; }
+				var problem = false;
+				$.each(idx.shards, function(shard, replicas) {
+					replicas.forEach(function(r) {
+						if( r.state !== "STARTED" ) { problem = true; }
+					});
+				});
+				return problem;
+			}
+			indexNames.filter( indexFilter ).filter(function(name) {
+				return !self._showProblemsOnly || hasProblemShards(name);
+			}).forEach(function(name) {
 				var indexObject = clusterState.routing_table.indices[name];
 				$.each(indexObject.shards, function(name, shard) {
 					shard.forEach(function(replica){
@@ -3656,7 +3897,8 @@
 						this._nodeSortMenu,
 						this._indicesSortMenu,
 						this._aliasMenu,
-						this._indexFilter
+						this._indexFilter,
+						this._problemsButton
 					],
 					right: [
 						this._refreshButton
@@ -3786,8 +4028,22 @@
 			this._super();
 			this.prefs = services.Preferences.instance();
 			this.cluster = this.config.cluster;
+			this._clusterHistory = this.prefs.get("app-cluster-history") || [];
 			this.el = $.joey(this._main_template());
+			this._uriEl = this.el.find(".uiClusterConnect-uri");
+			this._userEl = this.el.find(".uiClusterConnect-user");
+			this._passEl = this.el.find(".uiClusterConnect-pass");
+			this._historyEl = this.el.find(".uiClusterConnect-history");
+			this._loadSavedAuth();
 			this.cluster.get( "", this._node_handler );
+		},
+
+		_loadSavedAuth: function() {
+			var saved = this.prefs.get("app-auth") || {};
+			if( saved.user ) {
+				this._userEl.val( saved.user );
+				this._passEl.val( saved.pass || "" );
+			}
 		},
 
 		_node_handler: function(data) {
@@ -3799,33 +4055,59 @@
 		},
 
 		_reconnect_handler: function() {
-			var base_uri = this.el.find(".uiClusterConnect-uri").val();
-			var url;
-			if(base_uri.indexOf("?") !== -1) {
-				url = base_uri.substring(0, base_uri.indexOf("?")-1);
-			} else {
-				url = base_uri;
-			}
-			var argstr = base_uri.substring(base_uri.indexOf("?")+1, base_uri.length);
-			var args = argstr.split("&").reduce(function(r, p) {
-				r[decodeURIComponent(p.split("=")[0])] = decodeURIComponent(p.split("=")[1]);
-				return r;
-			}, {});
+			var base_uri = this._uriEl.val().trim();
+			if( !base_uri ) { return; }
+			var user = this._userEl.val().trim();
+			var pass = this._passEl.val();
+
+			// Save auth credentials to localStorage
+			this.prefs.set("app-auth", { user: user, pass: pass });
+
+			// Save cluster address to history (keep last 10)
+			var hist = this._clusterHistory.filter(function(u) { return u !== base_uri; });
+			hist.unshift(base_uri);
+			this._clusterHistory = hist.slice(0, 10);
+			this.prefs.set("app-cluster-history", this._clusterHistory);
+			this._renderHistory();
+
 			$("body").empty().append(new app.App("body", { id: "es",
-				base_uri: url,
-			 	auth_user : args["auth_user"] || "",
-			 	auth_password : args["auth_password"] || ""
+				base_uri: base_uri,
+				auth_user: user,
+				auth_password: pass
 			}));
 		},
 
+		_renderHistory: function() {
+			var self = this;
+			this._historyEl.empty();
+			if( this._clusterHistory.length === 0 ) { return; }
+			this._clusterHistory.forEach(function( uri ) {
+				self._historyEl.append(
+					$("<div>").addClass("uiClusterConnect-historyItem").text(uri).on("click", function() {
+						self._uriEl.val(uri);
+						self._reconnect_handler();
+					})
+				);
+			});
+		},
+
 		_main_template: function() {
+			var self = this;
 			return { tag: "SPAN", cls: "uiClusterConnect", children: [
-				{ tag: "INPUT", type: "text", cls: "uiClusterConnect-uri", onkeyup: function( ev ) {
-					if(ev.which === 13) {
-						ev.preventDefault();
-						this._reconnect_handler();
-					}
-				}.bind(this), id: this.id("baseUri"), value: this.cluster.base_uri },
+				{ tag: "INPUT", type: "text", cls: "uiClusterConnect-uri", placeholder: "http://localhost:9200",
+					onkeyup: function( ev ) {
+						if(ev.which === 13) { ev.preventDefault(); self._reconnect_handler(); }
+						// show/hide history dropdown
+						self._historyEl.toggle( self._uriEl && self._uriEl.val().length === 0 );
+					},
+					onfocus: function() { self._renderHistory(); self._historyEl.show(); },
+					onblur: function() { setTimeout(function(){ self._historyEl.hide(); }, 200); },
+					id: this.id("baseUri"), value: this.cluster.base_uri },
+				{ tag: "DIV", cls: "uiClusterConnect-history" },
+				{ tag: "INPUT", type: "text", cls: "uiClusterConnect-user", placeholder: i18n.text("Header.Username") },
+				{ tag: "INPUT", type: "password", cls: "uiClusterConnect-pass", placeholder: i18n.text("Header.Password"),
+					onkeyup: function( ev ) { if(ev.which === 13) { ev.preventDefault(); self._reconnect_handler(); } }
+				},
 				{ tag: "BUTTON", type: "button", text: i18n.text("Header.Connect"), onclick: this._reconnect_handler }
 			]};
 		}
@@ -3972,8 +4254,11 @@
 				}
 			}
 			if (data[this.config.index]){
-				for(var type in data[this.config.index].mappings) {
-					scan_properties([type], data[this.config.index].mappings[type]);
+				var mappings = data[this.config.index].mappings;
+				// ES8 typeless: properties sits directly under mappings
+				var mappingToProcess = (mappings && mappings.properties) ? { "_doc": mappings } : mappings;
+				for(var type in mappingToProcess) {
+					scan_properties([type], mappingToProcess[type]);
 				}
 			}
 
@@ -4390,15 +4675,10 @@
 				// XHR request fails if the URL is not ending with a "/"
 				this.base_uri += "/";
 			}
-			if( this.config.auth_user ) {
-				var credentials = window.btoa( this.config.auth_user + ":" + this.config.auth_password );
-				$.ajaxSetup({
-					headers: {
-						"Authorization": "Basic " + credentials
-					}
-				});
-			}
 			this.cluster = new services.Cluster({ base_uri: this.base_uri });
+			if( this.config.auth_user ) {
+				this.cluster.setAuth( this.config.auth_user, this.config.auth_password );
+			}
 			this._clusterState = new services.ClusterState({
 				cluster: this.cluster
 			});
