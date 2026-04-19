@@ -1,7 +1,7 @@
 {
-  "name": "elasticsearch-head",
-  "version": "0.0.0",
-  "description": "Front end for an elasticsearch cluster",
+  "name": "illume",
+  "version": "1.0.0",
+  "description": "Web front end for Elasticsearch — fork of elasticsearch-head with ES8 compatibility fixes",
   "main": "_site/index.html",
   "directories": {
     "test": "test"
@@ -13,12 +13,11 @@
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/mobz/elasticsearch-head.git"
+    "url": "https://github.com/PraveenAnandhanathan/illume.git"
   },
   "author": "",
   "license": "Apache2",
-  "gitHead": "0c2ac0b5723b493e4454baa7398f386ecb829412",
-  "readmeFilename": "README.textile",
+  "readmeFilename": "README.md",
   "devDependencies": {
     "grunt": "1.0.1",
     "grunt-contrib-concat": "1.0.1",
