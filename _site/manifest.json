@@ -10,8 +10,7 @@
   },
   "action": {
     "default_icon": "base/favicon.png",
-    "default_title": "illume",
-    "default_popup": "index.html"
+    "default_title": "illume"
   },
   "background": {
     "service_worker": "background.js"
@@ -29,7 +28,7 @@
   },
   "web_accessible_resources": [
     {
-      "resources": ["index.html", "app.js", "app.css", "vendor.js", "vendor.css", "i18n.js", "lang/*", "base/*", "fonts/*"],
+      "resources": ["index.html", "init.js", "app.js", "app.css", "vendor.js", "vendor.css", "i18n.js", "lang/*", "base/*", "fonts/*"],
       "matches": ["<all_urls>"]
     }
   ]
