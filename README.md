@@ -106,6 +106,18 @@ Changes to both `_site` and `src` directories must be committed.
 
 ---
 
+## Privacy
+
+illume does **not** collect, transmit, or share any user data.
+
+- **Preferences** (sort order, index filters, saved queries, cluster address history) are stored locally in your browser using `localStorage` / `chrome.storage`. They never leave your device.
+- **Network requests** are made exclusively to the Elasticsearch cluster URL you specify. No data is sent to any third party.
+- **No analytics, no tracking, no telemetry** of any kind.
+
+A privacy policy is not required because no user data is collected. This section exists solely to document that fact transparently.
+
+---
+
 ## Upstream / Attribution
 
 This project is a fork of [mobz/elasticsearch-head](https://github.com/mobz/elasticsearch-head), originally by [Ben Birch (@mobz)](https://twitter.com/mobz). All original work and license terms remain intact. This fork adds Elasticsearch 8.x compatibility fixes on top of the original.
